@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+	<head lang="en">
+		<title>Insert Bridge Suit</title>
+		<meta charset="utf-8" />
+		<script src="sdpi-components.js"></script>
+	</head>
+	<body>
+		<sdpi-item label="Suit">
+			<sdpi-select setting="suit" default="spades">
+				<option value="spades">♠ Spades</option>
+				<option value="hearts">♥ Hearts</option>
+				<option value="diamonds">♦ Diamonds</option>
+				<option value="clubs">♣ Clubs</option>
+			</sdpi-select>
+		</sdpi-item>
+		<sdpi-item label="Clipboard">
+			<sdpi-select setting="formats" default="auto">
+				<option value="auto">HTML + RTF (recommended)</option>
+				<option value="rtf">RTF only</option>
+				<option value="html">HTML only</option>
+				<option value="text">Plain text (no colour)</option>
+			</sdpi-select>
+		</sdpi-item>
+		<sdpi-item label="Word">
+			<sdpi-checkbox setting="resetWordFormatting" default="true" label="Reset colour for the text typed next"></sdpi-checkbox>
+		</sdpi-item>
+	</body>
+</html>

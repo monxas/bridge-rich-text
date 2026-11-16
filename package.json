@@ -1,0 +1,38 @@
+{
+  "name": "bridge-rich-text",
+  "version": "1.0.0",
+  "description": "Stream Deck plugin: insert coloured bridge suit symbols as rich text",
+  "scripts": {
+    "build": "rollup -c",
+    "build:helper": "bash scripts/build-helper.sh",
+    "icons": "tsx scripts/gen-icons.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "validate": "streamdeck validate com.monxas.bridgesuits.sdPlugin",
+    "pack": "npm run build && streamdeck pack com.monxas.bridgesuits.sdPlugin --output dist --force",
+    "release": "npm run typecheck && npm test && npm run build:helper && npm run pack",
+    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.monxas.bridgesuits\"",
+    "test:windows:prepare": "bash scripts/build-helper.sh && mkdir -p dist/windows-test && x86_64-w64-mingw32-gcc -O2 -Wall -static -o dist/windows-test/harness.exe test/windows/harness.c -luser32 && cp com.monxas.bridgesuits.sdPlugin/native/bridge-paste-helper.exe test/windows/run-wine.sh dist/windows-test/ && tsx test/windows/make-requests.ts dist/windows-test"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@elgato/cli": "^1.10.4",
+    "@resvg/resvg-js": "^2.6.2",
+    "@rollup/plugin-commonjs": "^29.0.3",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-terser": "^1.0.2",
+    "@rollup/plugin-typescript": "^12.3.1",
+    "@tsconfig/node20": "^20.1.11",
+    "@types/node": "^24.19.2",
+    "rollup": "^4.68.4",
+    "tslib": "^2.9.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  },
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@elgato/streamdeck": "^3.0.4"
+  }
+}

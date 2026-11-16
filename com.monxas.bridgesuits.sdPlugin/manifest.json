@@ -1,0 +1,44 @@
+{
+	"$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+	"UUID": "com.monxas.bridgesuits",
+	"Name": "Bridge Suits",
+	"Version": "1.0.0.0",
+	"Author": "monxas",
+	"Description": "Inserts the four bridge suit symbols (♠ ♥ ♦ ♣) as coloured, editable rich text into Microsoft Word and other rich-text editors.",
+	"Category": "Bridge Suits",
+	"CategoryIcon": "imgs/plugin/category-icon",
+	"Icon": "imgs/plugin/marketplace",
+	"CodePath": "bin/plugin.js",
+	"SDKVersion": 3,
+	"Software": {
+		"MinimumVersion": "7.1"
+	},
+	"OS": [
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"Nodejs": {
+		"Version": "24",
+		"Debug": "enabled"
+	},
+	"Actions": [
+		{
+			"Name": "Insert Bridge Suit",
+			"UUID": "com.monxas.bridgesuits.insert",
+			"Icon": "imgs/actions/insert/icon",
+			"Tooltip": "Pastes a coloured ♠ ♥ ♦ ♣ into the focused document.",
+			"PropertyInspectorPath": "ui/insert-bridge-suit.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/insert/key",
+					"ShowTitle": false
+				}
+			]
+		}
+	]
+}

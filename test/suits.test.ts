@@ -20,12 +20,25 @@ describe("suit definitions", () => {
 });
 
 describe("paste request", () => {
-	it("defaults to HTML + RTF and resetting Word formatting", () => {
-		const r = pasteRequestFor({ suit: "hearts" });
+	it("defaults to HTML + RTF on Windows and resetting Word formatting", () => {
+		const r = pasteRequestFor({ suit: "hearts" }, {}, "win32");
 		expect(r.text).toBe("♥");
 		expect(r.html).toContain('<span style="color:#DC0000">♥</span>');
 		expect(r.rtf).toContain("\\red220\\green0\\blue0");
 		expect(r.resetWordFormatting).toBe(true);
+	});
+
+	it("defaults to RTF only on macOS (Word for Mac's HTML import picks an emoji font)", () => {
+		const r = pasteRequestFor({ suit: "hearts" }, {}, "darwin");
+		expect(r.html).toBeUndefined();
+		expect(r.rtf).toContain("\\red220\\green0\\blue0");
+		expect(pasteRequestFor({ suit: "hearts", formats: "html" }, {}, "darwin").html).toBeDefined();
+	});
+
+	it("uses the font and size probed at the insertion point", () => {
+		const r = pasteRequestFor({ suit: "spades" }, { font: "Times New Roman", sizePt: 10.5 }, "win32");
+		expect(r.html).toContain(`<span style="font-family:'Times New Roman';font-size:10.5pt;color:#111111">`);
+		expect(r.rtf).toBe("{\\rtf1\\ansi\\uc1{\\fonttbl{\\f0\\fnil Times New Roman;}}{\\colortbl ;\\red17\\green17\\blue17;}{\\f0\\fs21\\cf1 \\u9824?}}");
 	});
 
 	it("honours advanced settings", () => {

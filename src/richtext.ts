@@ -9,6 +9,14 @@ export interface RichRun {
 	text: string;
 	/** `#RRGGBB`. Omitted = inherit / automatic colour. */
 	color?: string;
+	/**
+	 * Font family. Omitted = not specified, which most editors replace with
+	 * their own default (Word: Times New Roman, or an emoji font for ♠♥♦♣),
+	 * so callers that know the font at the insertion point should set it.
+	 */
+	font?: string;
+	/** Font size in points. Omitted = not specified. */
+	sizePt?: number;
 }
 
 export type RichText = readonly RichRun[];
@@ -37,6 +45,19 @@ export function plainText(rich: RichText): string {
 	return rich.map((r) => r.text).join("");
 }
 
+/** Font names go into CSS and RTF verbatim, so only allow plain names. */
+const SAFE_FONT = /^[\p{L}\p{N} ._&+-]{1,64}$/u;
+
+function checkFont(font: string): string {
+	if (!SAFE_FONT.test(font)) throw new Error(`Unsupported font name "${font}"`);
+	return font;
+}
+
+function checkSize(size: number): number {
+	if (!Number.isFinite(size) || size < 1 || size > 1638) throw new Error(`Unsupported font size ${size}`);
+	return Math.round(size * 2) / 2; // half points, as Word and RTF store them
+}
+
 function escapeHtml(text: string): string {
 	return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
@@ -45,9 +66,14 @@ export function htmlFragment(rich: RichText): string {
 	return rich
 		.map((run) => {
 			const text = escapeHtml(run.text);
-			if (!run.color) return text;
-			parseColor(run.color); // validate, never inject arbitrary CSS
-			return `<span style="color:${run.color.toUpperCase()}">${text}</span>`;
+			const style: string[] = [];
+			if (run.font) style.push(`font-family:'${checkFont(run.font)}'`);
+			if (run.sizePt !== undefined) style.push(`font-size:${checkSize(run.sizePt)}pt`);
+			if (run.color) {
+				parseColor(run.color); // validate, never inject arbitrary CSS
+				style.push(`color:${run.color.toUpperCase()}`);
+			}
+			return style.length ? `<span style="${style.join(";")}">${text}</span>` : text;
 		})
 		.join("");
 }
@@ -96,29 +122,36 @@ function rtfEscape(text: string): string {
 }
 
 /**
- * Minimal RTF: a colour table and \cfN runs. No font table, no paragraph
- * marks, so the receiving document keeps its own font and paragraph.
+ * Minimal RTF: colour and font tables and \\cfN / \\fN / \\fsN runs only. No
+ * paragraph marks, so the receiving document keeps its own paragraph.
  */
 export function buildRtf(rich: RichText): string {
 	const colors: string[] = [];
+	const fonts: string[] = [];
+	const indexOf = (list: string[], key: string) => {
+		const i = list.indexOf(key);
+		return i >= 0 ? i : list.push(key) - 1;
+	};
 	const body = rich
 		.map((run) => {
 			const text = rtfEscape(run.text);
-			if (!run.color) return text;
-			const key = run.color.toUpperCase();
-			let index = colors.indexOf(key);
-			if (index < 0) index = colors.push(key) - 1;
-			return `{\\cf${index + 1} ${text}}`;
+			let props = "";
+			if (run.font) props += `\\f${indexOf(fonts, checkFont(run.font))}`;
+			if (run.sizePt !== undefined) props += `\\fs${checkSize(run.sizePt) * 2}`;
+			if (run.color) props += `\\cf${indexOf(colors, run.color.toUpperCase()) + 1}`;
+			return props ? `{${props} ${text}}` : text;
 		})
 		.join("");
-	const table = colors
-		.map((c) => {
-			const [r, g, b] = parseColor(c);
-			return `\\red${r}\\green${g}\\blue${b};`;
-		})
-		.join("");
-	const colorTable = colors.length ? `{\\colortbl ;${table}}` : "";
-	return `{\\rtf1\\ansi\\uc1${colorTable}${body}}`;
+	const fontTable = fonts.length ? `{\\fonttbl${fonts.map((f, i) => `{\\f${i}\\fnil ${rtfEscape(f)};}`).join("")}}` : "";
+	const colorTable = colors.length
+		? `{\\colortbl ;${colors
+				.map((c) => {
+					const [r, g, b] = parseColor(c);
+					return `\\red${r}\\green${g}\\blue${b};`;
+				})
+				.join("")}}`
+		: "";
+	return `{\\rtf1\\ansi\\uc1${fontTable}${colorTable}${body}}`;
 }
 
 export function buildClipboardPayload(rich: RichText, formats: PasteFormats = "auto"): ClipboardPayload {

@@ -10,12 +10,18 @@ import type { ClipboardPayload } from "./richtext";
  *
  *   <id> <flags> <text> <cf_html> <rtf>
  *
+ * or a probe for the formatting at the insertion point (Word only; other
+ * applications answer with an empty note):
+ *
+ *   <id> probe
+ *
  * The helper answers each request, in order, with one line on stdout:
  *
  *   <id> ok [note]
  *   <id> error <code> <message>
  *
- * and may emit unsolicited lines: "ready <version>" and "event <kind> <message>".
+ * A probe's note is "font=<base64 UTF-8 name> size=<points>" (either part may
+ * be missing). The helper may emit unsolicited lines: "ready <version>" and "event <kind> <message>".
  */
 
 export const FLAG_RESET_WORD_FORMATTING = 1;
@@ -54,6 +60,22 @@ export function encodeRequest(id: string, request: PasteRequest): string {
 	return `${id} ${flags} ${b64(request.text)} ${b64(request.html)} ${b64(request.rtf)}\n`;
 }
 
+/** Formatting at the insertion point, as reported by a probe. */
+export interface InsertionFormat {
+	font?: string;
+	sizePt?: number;
+}
+
+export function parseProbeNote(note: string): InsertionFormat {
+	const result: InsertionFormat = {};
+	for (const part of note.split(" ")) {
+		const [key, value] = part.split("=", 2);
+		if (key === "font" && value) result.font = Buffer.from(value, "base64").toString("utf8") || undefined;
+		if (key === "size" && value && Number(value) > 0) result.sizePt = Number(value);
+	}
+	return result;
+}
+
 export function parseResponse(line: string): HelperResponse | undefined {
 	const [head, ...rest] = line.trimEnd().split(" ");
 	if (!head) return undefined;
@@ -85,6 +107,15 @@ export class PasteHelper {
 
 	/** Places the payload on the clipboard, pastes it, restores the clipboard. Resolves with the helper's note. */
 	paste(request: PasteRequest): Promise<string> {
+		return this.send((id) => encodeRequest(id, request));
+	}
+
+	/** Font and size at the insertion point of the focused Word document; empty for other applications. */
+	async probe(): Promise<InsertionFormat> {
+		return parseProbeNote(await this.send((id) => `${id} probe\n`));
+	}
+
+	private send(line: (id: string) => string): Promise<string> {
 		const child = this.ensureStarted();
 		const id = String(this.nextId++);
 		return new Promise<string>((resolve, reject) => {
@@ -93,7 +124,7 @@ export class PasteHelper {
 				reject(new PasteError("timeout", `helper did not answer within ${this.timeoutMs} ms`));
 			}, this.timeoutMs);
 			this.pending.set(id, { resolve, reject, timer });
-			child.stdin!.write(encodeRequest(id, request));
+			child.stdin!.write(line(id));
 		});
 	}
 

@@ -8,13 +8,17 @@ import streamDeck, {
 import { suitKeyImage } from "../render";
 import { type BridgeSuitSettings, pasteRequestFor } from "../suit-payload";
 import { resolveSuit } from "../suits";
-import type { PasteRequest } from "../paste-helper";
+import type { InsertionFormat, PasteRequest } from "../paste-helper";
 
-export type Paster = (request: PasteRequest) => Promise<string>;
+/** What the action needs from the platform helper. */
+export interface Inserter {
+	probe(): Promise<InsertionFormat>;
+	paste(request: PasteRequest): Promise<string>;
+}
 
 @action({ UUID: "com.monxas.bridgesuits.insert" })
 export class InsertBridgeSuit extends SingletonAction<BridgeSuitSettings> {
-	constructor(private readonly paste: Paster) {
+	constructor(private readonly inserter: Inserter) {
 		super();
 	}
 
@@ -31,8 +35,16 @@ export class InsertBridgeSuit extends SingletonAction<BridgeSuitSettings> {
 	override async onKeyDown(ev: KeyDownEvent<BridgeSuitSettings>): Promise<void> {
 		const suit = resolveSuit(ev.payload.settings.suit);
 		try {
-			const note = await this.paste(pasteRequestFor(ev.payload.settings));
-			streamDeck.logger.info(`inserted ${suit}${note ? ` (${note})` : ""}`);
+			const settings = ev.payload.settings;
+			let format: InsertionFormat = {};
+			if (settings.matchWordFont !== false) {
+				format = await this.inserter.probe().catch((err: unknown) => {
+					streamDeck.logger.warn(`font probe failed, inserting without font: ${String(err)}`);
+					return {};
+				});
+			}
+			const note = await this.inserter.paste(pasteRequestFor(settings, format));
+			streamDeck.logger.info(`inserted ${suit}${format.font ? ` in ${format.font} ${format.sizePt ?? "?"}pt` : ""}${note ? ` (${note})` : ""}`);
 		} catch (err) {
 			streamDeck.logger.error(`inserting ${suit} failed: ${err instanceof Error ? err.message : String(err)}`);
 			await ev.action.showAlert();

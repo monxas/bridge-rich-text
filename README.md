@@ -9,7 +9,9 @@ Inserts the four bridge suit symbols into Microsoft Word (or any rich-text edito
 | Diamonds | ♦ U+2666 | `#DC0000` |
 | Clubs | ♣ U+2663 | `#008A35` |
 
-Windows 10/11, Stream Deck 7.1+. No VBA, no Word add-in, no internet access needed, no paid dependencies. MIT licensed. Design: [docs/ADR-001](docs/ADR-001-stream-deck-bridge-suits.md).
+Windows 10/11 and macOS 12+, Stream Deck 7.1+. No VBA, no Word add-in, no internet access needed, no paid dependencies.
+
+The inserted characters are the plain Unicode code points above (text, never emoji: no U+FE0F) with a font colour. MIT licensed. Design: [docs/ADR-001](docs/ADR-001-stream-deck-bridge-suits.md).
 
 ## Install
 
@@ -18,7 +20,11 @@ Windows 10/11, Stream Deck 7.1+. No VBA, no Word add-in, no internet access need
 3. In Stream Deck, drag **Bridge Suits → Insert Bridge Suit** onto four keys and choose a suit for each one in the property inspector.
 4. Click into a Word document and press a key.
 
-Nothing else needs installing: the plugin runs on the Node.js runtime that ships with Stream Deck, and the native helper is a 28 KB executable that only uses DLLs built into Windows 10/11.
+Nothing else needs installing: the plugin runs on the Node.js runtime that ships with Stream Deck. The native helper is a 28 KB executable that only uses DLLs built into Windows 10/11, or a universal (Apple silicon + Intel) binary on macOS.
+
+**macOS permissions** (asked on first use):
+- *Accessibility* for **Stream Deck** (System Settings → Privacy & Security → Accessibility), needed to send ⌘V. Without it the key shows ⚠ and the log says `accessibility_denied`.
+- *Automation → Microsoft Word* for Stream Deck, used to read the font/size at the cursor and to give the text typed next its previous formatting. If refused, suits are still inserted in colour, but without font matching.
 
 ### Property inspector
 
@@ -26,7 +32,8 @@ Nothing else needs installing: the plugin runs on the Node.js runtime that ships
 |---|---|---|
 | Suit | Spades | The symbol this key inserts. |
 | Clipboard | HTML + RTF | Which rich formats are offered to the target. Change to *RTF only* or *HTML only* if Word applies an unwanted font; *Plain text* is a diagnostic mode without colour. |
-| Word: reset colour for the text typed next | on | Sends `Ctrl+Space` after pasting, only when the focused window is Word, so the text you type afterwards is not red/green. Note: `Ctrl+Space` removes all *manual* character formatting at the insertion point (e.g. bold you switched on by hand) for the next characters you type. |
+| Word: use the font and size at the cursor (macOS) | on | Asks Word for the font and size at the insertion point and inserts the suit in them. If that font has no ♠♥♦♣ glyphs (Aptos, Calibri…), a text font that has them (Arial) is used, because otherwise Word for Mac draws them with *Apple Color Emoji*, which ignores the colour. |
+| Word: keep the text typed next uncoloured | on | macOS: after the paste, Word's insertion point gets its previous font, size and colour back. Windows (and macOS without the Automation permission): sends `Ctrl+Space`, which resets the insertion point to the paragraph style, so manual formatting such as bold or a manually chosen font is not carried into the next characters. |
 
 ## How it works
 
@@ -59,7 +66,8 @@ Key choices:
 - The clipboard cannot be locked atomically across applications. Formats that hold GDI/private handles (`CF_OWNERDISPLAY`, `CF_DSP*`, private and GDI-object ranges) cannot be copied; if any were present they are lost and the plugin logs `restore_partial`. Bitmaps, metafiles, text, HTML, RTF and registered formats (e.g. Office's) are preserved. Delayed-render owners such as Excel lose their "marching ants".
 - Windows blocks simulated input into applications running **as administrator** (UIPI) when Stream Deck is not elevated. The helper detects a higher integrity level and reports `target_elevated`.
 - If you hold Shift/Ctrl/Alt/Win while pressing the key, the helper waits up to 1 s for the release, then reports `modifier_held` (otherwise Word would receive e.g. `Ctrl+Shift+V`).
-- Windows only. On macOS the action loads but every press reports `unsupported_platform`.
+- Windows: font matching is not implemented yet (the helper answers the font probe with "unknown"); the suit takes whatever font Word assigns to pasted rich text. Planned: read the font through Word's COM object model, as the macOS helper does through Apple Events.
+- macOS: "auto" offers RTF + text only, because Word for Mac prefers HTML and its HTML import draws suits with Apple Color Emoji in some fonts (Times New Roman) where RTF keeps the font.
 
 ## Build
 
@@ -77,7 +85,9 @@ npm run release        # typecheck + unit tests + build helper + bundle + valida
 # -> dist/com.monxas.bridgesuits.streamDeckPlugin
 ```
 
-Individual steps: `npm run build:helper`, `npm run build`, `npm run icons` (regenerates `imgs/` from `src/render.ts`), `npm run validate`, `npm run pack`.
+On macOS `npm run release` also builds the macOS helper (`npm run build:helper:macos`, needs Xcode or the Command Line Tools); the Windows helper can be cross-built anywhere.
+
+Individual steps: `npm run build:helper`, `npm run build:helper:macos`, `npm run build`, `npm run icons` (regenerates `imgs/` from `src/render.ts`), `npm run validate`, `npm run pack`.
 
 The packaged `.exe` is part of the source tree under `com.monxas.bridgesuits.sdPlugin/native/` so that a plugin can be packed without a C compiler; rebuild it with `npm run build:helper` after changing `native/bridge-paste-helper.c`.
 
@@ -96,15 +106,14 @@ npm run watch                                          # rebuild + restart the p
 
 ## Tests
 
-There are three levels. Only the first two are automated.
-
 | Level | What | How | Status |
 |---|---|---|---|
-| Unit | Suit table, CF_HTML byte offsets (incl. multibyte/emoji), RTF encoding, payload variants, key SVGs, helper protocol, client restart/timeout handling against a fake helper | `npm test` (Vitest, any OS) | automated, passing |
-| Native end-to-end | Real `bridge-paste-helper.exe` + a Win32 harness that plays a focused "Word" window (`OpusApp` class) and reads the clipboard on Ctrl+V. Checks HTML/RTF/text received, Ctrl+Space only when enabled, 3 queued presses, original clipboard (text + private format) restored, newer clipboard content left alone, unread paste reported | `npm run test:windows:prepare`, then `test/windows/run-wine.sh dist/windows-test` under Wine on Linux (null graphics driver, no real desktop touched), or run `harness.exe` on Windows | automated, passing under Wine 11 (Proton Experimental) |
-| Microsoft Word | Real Word: colour, font inheritance, formatting of subsequent typing | manual, [docs/word-manual-test.md](docs/word-manual-test.md) | **not yet performed** |
+| Unit (28) | Suit table, CF_HTML byte offsets (incl. multibyte/emoji), RTF encoding, font/size in payloads, font-name injection guards, per-platform formats, key SVGs, helper protocol, client restart/timeout | `npm test` (Vitest, any OS) | automated, passing |
+| Windows helper end-to-end (17 checks) | Real `bridge-paste-helper.exe` + a Win32 harness that plays a focused "Word" window (`OpusApp` class) and reads the clipboard on Ctrl+V: HTML/RTF/text received, Ctrl+Space only when enabled, 3 queued presses, original clipboard (text + private format) restored, newer clipboard content left alone, unread paste reported | `npm run test:windows:prepare`, then `test/windows/run-wine.sh dist/windows-test` under Wine on Linux (null graphics driver, no real desktop touched) | automated, passing under Wine 11 (Proton Experimental) |
+| **Microsoft Word for Mac** | Real Word, real helper, real ⌘V: four suits per document after text in Arial 14, Aptos 11, Times New Roman 10.5, Calibri 12; then `AKQ` typed after each suit; .docx inspected | `npm run test:word:mac` (Word comes to the front; don't type while it runs) | **passed in Word for Mac**: colour exact, suit in document font (Arial, Times) or Arial fallback (Aptos, Calibri), size kept, typed text keeps document font/size and no colour, clipboard restored |
+| Microsoft Word for Windows | Same, on Windows | manual, [docs/word-manual-test.md](docs/word-manual-test.md) | **not performed**: no Windows + Word available |
 
-**The Word integration has not been verified in Microsoft Word.** The Wine run proves the helper's clipboard and input logic, not how Word interprets the HTML/RTF. Use the manual checklist; if Word picks an unwanted font, switch the *Clipboard* setting to *RTF only* or *HTML only* and note which one behaves best.
+**Word for Windows has not been verified.** The Wine run proves the Windows helper's clipboard and input logic, not how Word for Windows interprets the HTML/RTF. Use the manual checklist; if Word picks an unwanted font, switch *Clipboard* to *RTF only* or *HTML only*.
 
 ## Layout
 
@@ -117,6 +126,7 @@ src/paste-helper.ts              persistent helper client + line protocol
 src/actions/insert-bridge-suit.ts Stream Deck action
 src/plugin.ts                    entry point
 native/bridge-paste-helper.c     Windows helper (clipboard + SendInput)
-test/                            unit tests; test/windows/ native harness
+native/macos/BridgePasteHelper.swift  macOS helper (pasteboard + CGEvent + Word Apple Events)
+test/                            unit tests; test/windows/ Wine harness; test/macos/ Word for Mac e2e
 com.monxas.bridgesuits.sdPlugin/ manifest, property inspector, images, helper .exe
 ```

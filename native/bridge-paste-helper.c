@@ -199,7 +199,12 @@ static DWORD WINAPI stdin_reader(LPVOID unused) {
 		char *start = buf, *nl;
 		while ((nl = memchr(start, '\n', len - (size_t)(start - buf))) != NULL) {
 			*nl = '\0';
-			if (*start) {
+			size_t lineLen = strlen(start);
+			if (lineLen > 6 && strcmp(start + lineLen - 6, " probe") == 0 && lineLen - 6 < 64) {
+				/* Font probing is not implemented on Windows yet: answer "unknown". */
+				start[lineLen - 6] = '\0';
+				reply(start, "ok", "");
+			} else if (*start) {
 				char errId[64];
 				Request *r = parse_request(start, errId, sizeof errId);
 				if (r) PostMessage(g_hwnd, WM_APP_REQUEST, 0, (LPARAM)r);

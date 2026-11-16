@@ -6,8 +6,8 @@ import { pasteRequestFor } from "../../src/suit-payload";
 const out = process.argv[2] ?? "dist/windows-test";
 writeFileSync(
 	`${out}/requests-chain.txt`,
-	encodeRequest("1", pasteRequestFor({ suit: "hearts" })) +
-		encodeRequest("2", pasteRequestFor({ suit: "clubs", formats: "rtf" })) +
-		encodeRequest("3", pasteRequestFor({ suit: "spades", resetWordFormatting: false })),
+	encodeRequest("1", pasteRequestFor({ suit: "hearts" }, {}, "win32")) +
+		encodeRequest("2", pasteRequestFor({ suit: "clubs", formats: "rtf" }, {}, "win32")) +
+		encodeRequest("3", pasteRequestFor({ suit: "spades", resetWordFormatting: false }, {}, "win32")),
 );
-writeFileSync(`${out}/requests-one.txt`, encodeRequest("1", pasteRequestFor({ suit: "diamonds" })));
+writeFileSync(`${out}/requests-one.txt`, encodeRequest("1", pasteRequestFor({ suit: "diamonds" }, {}, "win32")));

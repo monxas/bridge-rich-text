@@ -42,6 +42,12 @@ describe("CF_HTML", () => {
 		expect(htmlFragment([{ text: "♥", color: "#dc0000" }])).toBe('<span style="color:#DC0000">♥</span>');
 	});
 
+	it("rejects font names that could inject CSS or RTF", () => {
+		expect(() => htmlFragment([{ text: "x", font: "Arial';color:red" }])).toThrow();
+		expect(() => buildRtf([{ text: "x", font: "A}{\\b" }])).toThrow();
+		expect(() => htmlFragment([{ text: "x", sizePt: 0 }])).toThrow();
+	});
+
 	it("escapes text and rejects non-hex colours", () => {
 		expect(htmlFragment([{ text: "<a&b>" }])).toBe("&#60;a&#38;b&#62;");
 		expect(() => htmlFragment([{ text: "x", color: "red;font-size:40pt" }])).toThrow();

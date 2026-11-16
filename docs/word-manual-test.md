@@ -1,4 +1,6 @@
-# Manual integration test — Microsoft Word
+# Manual integration test — Microsoft Word for Windows
+
+(Word for Mac is covered by the automated `npm run test:word:mac`, which passes.)
 
 Automated tests cannot run Word. Fill this in on a real Windows machine before calling the Word integration verified (ADR-001 §10.10).
 
@@ -14,8 +16,10 @@ Word paste option *File → Options → Advanced → Pasting from other programs
 | 4 | Press ♠ | near-black ♠ (`#111111`) | |
 | 5 | Select an inserted ♥, press Shift+F1 (Reveal Formatting) or Alt+X | character is U+2665, text not an image/field | |
 | 6 | Type `AKQ` right after a ♥ | `AKQ` is in the document's normal colour, not red | |
-| 7 | Same as 6 with *reset colour* off | `AKQ` is red (expected Word behaviour; documents why the option exists) | |
-| 8 | Paragraph in Arial 14 pt: press ♥ mid-sentence | ♥ is red; font size 14 pt; font name stays Arial (or a symbol fallback font Word picks for the glyph) — **not** Times New Roman | |
+| 7 | Same as 6 with *Keep the text typed next uncoloured* off | `AKQ` is red (expected Word behaviour; documents why the option exists) | |
+| 8 | Paragraph in Arial 14 pt: press ♥ mid-sentence | ♥ is red, Arial 14 pt (plugin log: `inserted hearts in Arial 14pt`) | |
+| 8b | Paragraph in Aptos (or Calibri) 11 pt: press ♥ then type `AKQ` | ♥ red in Segoe UI Symbol 11 pt (Aptos has no suit glyphs); `AKQ` in Aptos 11 pt, not red | |
+| 8c | Word just started and never lost focus: press ♥ | still inserted in red; log may show no font (COM not registered yet, KB 238610); after Alt+Tab away and back, font matching works | |
 | 9 | Repeat 8 in a Heading 1 paragraph and in a table cell | as 8, no new paragraph or line break | |
 | 10 | Repeat 8 with Clipboard = *RTF only*, then *HTML only* | record which mode keeps font/size best | |
 | 11 | Select a word, press ♣ | selection replaced by green ♣ only | |

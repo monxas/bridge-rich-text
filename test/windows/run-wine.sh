@@ -48,6 +48,7 @@ echo "steal: target replaces the clipboard while pasting"
 run steal requests-one.txt
 expect steal 'helper: 1 ok clipboard changed by another application' 'helper notices the change'
 expect steal 'after_text=STOLEN' 'newer clipboard content is not overwritten'
+expect steal 'helper: 2 ok' 'font probe answered (unknown without Word)'
 
 echo "ignore: target never reads the clipboard"
 run ignore requests-one.txt

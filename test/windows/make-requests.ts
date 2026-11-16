@@ -10,4 +10,5 @@ writeFileSync(
 		encodeRequest("2", pasteRequestFor({ suit: "clubs", formats: "rtf" }, {}, "win32")) +
 		encodeRequest("3", pasteRequestFor({ suit: "spades", resetWordFormatting: false }, {}, "win32")),
 );
-writeFileSync(`${out}/requests-one.txt`, encodeRequest("1", pasteRequestFor({ suit: "diamonds" }, {}, "win32")));
+// Line 2: font probe (the fake Word is not a COM server, so the answer is "unknown").
+writeFileSync(`${out}/requests-one.txt`, encodeRequest("1", pasteRequestFor({ suit: "diamonds" }, {}, "win32")) + "2 probe\n");

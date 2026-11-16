@@ -23,6 +23,8 @@
 #define UNICODE
 #define _UNICODE
 #include <windows.h>
+#include <ole2.h>
+#include <oleauto.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +55,7 @@ typedef struct Request {
 	Blob text; /* UTF-8, converted to UTF-16 when rendered */
 	Blob html; /* complete CF_HTML document, UTF-8 */
 	Blob rtf;
+	BOOL isProbe;
 	struct Request *next;
 } Request;
 
@@ -201,9 +204,13 @@ static DWORD WINAPI stdin_reader(LPVOID unused) {
 			*nl = '\0';
 			size_t lineLen = strlen(start);
 			if (lineLen > 6 && strcmp(start + lineLen - 6, " probe") == 0 && lineLen - 6 < 64) {
-				/* Font probing is not implemented on Windows yet: answer "unknown". */
 				start[lineLen - 6] = '\0';
-				reply(start, "ok", "");
+				Request *r = calloc(1, sizeof *r);
+				if (r) {
+					strcpy(r->id, start);
+					r->isProbe = TRUE;
+					PostMessage(g_hwnd, WM_APP_REQUEST, 0, (LPARAM)r);
+				}
 			} else if (*start) {
 				char errId[64];
 				Request *r = parse_request(start, errId, sizeof errId);
@@ -473,6 +480,187 @@ static int target_more_privileged(HWND target) {
 	return result;
 }
 
+
+/* ---------- Microsoft Word object model (COM automation, no VBA) ---------- */
+
+typedef struct {
+	WCHAR name[64];
+	double size;
+	LONG color;
+	BOOL valid;
+} WordFormat;
+
+static WordFormat g_restoreFormat;
+
+static HRESULT invoke_retry(IDispatch *obj, DISPID id, WORD flags, DISPPARAMS *params, VARIANT *result) {
+	HRESULT hr = E_FAIL;
+	for (int i = 0; i < 20; i++) {
+		hr = obj->lpVtbl->Invoke(obj, id, &IID_NULL, LOCALE_USER_DEFAULT, flags, params, result, NULL, NULL);
+		if (hr != RPC_E_CALL_REJECTED && hr != RPC_E_SERVERCALL_RETRYLATER) break;
+		Sleep(25); /* Word is busy (e.g. still handling the paste) */
+	}
+	return hr;
+}
+
+static DISPID dispid_of(IDispatch *obj, const WCHAR *name) {
+	DISPID id = DISPID_UNKNOWN;
+	LPOLESTR n = (LPOLESTR)name;
+	obj->lpVtbl->GetIDsOfNames(obj, &IID_NULL, &n, 1, LOCALE_USER_DEFAULT, &id);
+	return id;
+}
+
+static HRESULT disp_get(IDispatch *obj, const WCHAR *name, VARIANT *out) {
+	VariantInit(out);
+	DISPID id = dispid_of(obj, name);
+	if (id == DISPID_UNKNOWN) return DISP_E_UNKNOWNNAME;
+	DISPPARAMS none = {NULL, NULL, 0, 0};
+	return invoke_retry(obj, id, DISPATCH_PROPERTYGET, &none, out);
+}
+
+static HRESULT disp_put(IDispatch *obj, const WCHAR *name, VARIANT *value) {
+	DISPID id = dispid_of(obj, name);
+	if (id == DISPID_UNKNOWN) return DISP_E_UNKNOWNNAME;
+	DISPID named = DISPID_PROPERTYPUT;
+	DISPPARAMS params = {value, &named, 1, 1};
+	return invoke_retry(obj, id, DISPATCH_PROPERTYPUT, &params, NULL);
+}
+
+/* Word.Application.Selection.Font of the running Word, or NULL. */
+static IDispatch *word_selection_font(void) {
+	CLSID clsid;
+	IUnknown *unk = NULL;
+	IDispatch *app = NULL, *font = NULL;
+	VARIANT selection, fontVar;
+	if (FAILED(CLSIDFromProgID(L"Word.Application", &clsid)) || FAILED(GetActiveObject(&clsid, NULL, &unk))) return NULL;
+	HRESULT hr = unk->lpVtbl->QueryInterface(unk, &IID_IDispatch, (void **)&app);
+	unk->lpVtbl->Release(unk);
+	if (FAILED(hr)) return NULL;
+	if (SUCCEEDED(disp_get(app, L"Selection", &selection)) && selection.vt == VT_DISPATCH && selection.pdispVal) {
+		if (SUCCEEDED(disp_get(selection.pdispVal, L"Font", &fontVar)) && fontVar.vt == VT_DISPATCH) font = fontVar.pdispVal;
+		VariantClear(&selection);
+	}
+	app->lpVtbl->Release(app);
+	return font;
+}
+
+static BOOL word_read_format(WordFormat *out) {
+	ZeroMemory(out, sizeof *out);
+	IDispatch *font = word_selection_font();
+	if (!font) return FALSE;
+	VARIANT v;
+	if (SUCCEEDED(disp_get(font, L"Name", &v)) && v.vt == VT_BSTR && v.bstrVal && v.bstrVal[0]) lstrcpynW(out->name, v.bstrVal, 64);
+	VariantClear(&v);
+	if (SUCCEEDED(disp_get(font, L"Size", &v)) && SUCCEEDED(VariantChangeType(&v, &v, 0, VT_R8)) && v.dblVal > 0 && v.dblVal < 1639)
+		out->size = v.dblVal; /* mixed selections report 9999999 */
+	VariantClear(&v);
+	BOOL haveColor = SUCCEEDED(disp_get(font, L"Color", &v)) && SUCCEEDED(VariantChangeType(&v, &v, 0, VT_I4));
+	if (haveColor) out->color = v.lVal;
+	VariantClear(&v);
+	font->lpVtbl->Release(font);
+	out->valid = haveColor; /* colour is what the typing restore needs most */
+	return out->valid || out->name[0];
+}
+
+static BOOL word_restore_format(const WordFormat *f) {
+	IDispatch *font = word_selection_font();
+	if (!font) return FALSE;
+	BOOL ok = TRUE;
+	VARIANT v;
+	if (f->name[0]) {
+		VariantInit(&v);
+		v.vt = VT_BSTR;
+		v.bstrVal = SysAllocString(f->name);
+		ok &= SUCCEEDED(disp_put(font, L"Name", &v));
+		VariantClear(&v);
+	}
+	if (f->size > 0) {
+		VariantInit(&v);
+		v.vt = VT_R4;
+		v.fltVal = (float)f->size;
+		ok &= SUCCEEDED(disp_put(font, L"Size", &v));
+	}
+	VariantInit(&v);
+	v.vt = VT_I4;
+	v.lVal = f->color; /* includes wdColorAutomatic */
+	ok &= SUCCEEDED(disp_put(font, L"Color", &v));
+	font->lpVtbl->Release(font);
+	return ok;
+}
+
+/* 1 = font draws all four suits, 0 = it does not, -1 = font not installed. */
+static int font_has_suit_glyphs(const WCHAR *name) {
+	LOGFONTW lf = {0};
+	lf.lfHeight = -16;
+	lf.lfCharSet = DEFAULT_CHARSET;
+	lstrcpynW(lf.lfFaceName, name, LF_FACESIZE);
+	HFONT font = CreateFontIndirectW(&lf);
+	HDC dc = CreateCompatibleDC(NULL);
+	if (!font || !dc) {
+		if (font) DeleteObject(font);
+		if (dc) DeleteDC(dc);
+		return -1;
+	}
+	HGDIOBJ old = SelectObject(dc, font);
+	WCHAR face[LF_FACESIZE] = {0};
+	GetTextFaceW(dc, LF_FACESIZE, face);
+	int result = -1;
+	if (lstrcmpiW(face, name) == 0) {
+		WORD glyphs[4];
+		static const WCHAR suits[] = {0x2660, 0x2663, 0x2665, 0x2666};
+		result = GetGlyphIndicesW(dc, suits, 4, glyphs, GGI_MARK_NONEXISTING_GLYPHS) == 4 && glyphs[0] != 0xFFFF &&
+		         glyphs[1] != 0xFFFF && glyphs[2] != 0xFFFF && glyphs[3] != 0xFFFF;
+	}
+	SelectObject(dc, old);
+	DeleteObject(font);
+	DeleteDC(dc);
+	return result;
+}
+
+/* Text fonts with ♠♣♥♦ glyphs for documents whose font has none. */
+static const WCHAR *const SUIT_FALLBACK_FONTS[] = {L"Segoe UI Symbol", L"Arial"};
+
+static const WCHAR *suit_font_for(const WCHAR *documentFont) {
+	if (!documentFont[0] || font_has_suit_glyphs(documentFont) != 0) return documentFont;
+	for (size_t i = 0; i < sizeof SUIT_FALLBACK_FONTS / sizeof *SUIT_FALLBACK_FONTS; i++)
+		if (font_has_suit_glyphs(SUIT_FALLBACK_FONTS[i]) == 1) return SUIT_FALLBACK_FONTS[i];
+	return documentFont;
+}
+
+static void b64_encode(const BYTE *in, size_t len, char *out, size_t outSize) {
+	static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	size_t o = 0;
+	for (size_t i = 0; i < len && o + 5 < outSize; i += 3) {
+		unsigned v = (unsigned)in[i] << 16 | (i + 1 < len ? (unsigned)in[i + 1] << 8 : 0) | (i + 2 < len ? in[i + 2] : 0);
+		out[o++] = t[v >> 18 & 63];
+		out[o++] = t[v >> 12 & 63];
+		out[o++] = i + 1 < len ? t[v >> 6 & 63] : '=';
+		out[o++] = i + 2 < len ? t[v & 63] : '=';
+	}
+	out[o] = '\0';
+}
+
+/* "font=<base64 UTF-8> size=<pt>" for the focused Word document, or "". */
+static void probe_note(char *out, size_t outSize) {
+	out[0] = '\0';
+	HWND fg = GetForegroundWindow();
+	WCHAR cls[64];
+	if (!fg || !GetClassNameW(fg, cls, 64) || wcscmp(cls, L"OpusApp") != 0) return;
+	WordFormat f;
+	if (!word_read_format(&f)) return;
+	if (f.name[0]) {
+		char utf8[256], b64[400];
+		int n = WideCharToMultiByte(CP_UTF8, 0, suit_font_for(f.name), -1, utf8, sizeof utf8, NULL, NULL);
+		if (n > 1) {
+			b64_encode((const BYTE *)utf8, (size_t)n - 1, b64, sizeof b64);
+			snprintf(out, outSize, "font=%s", b64);
+		}
+	}
+	if (f.size > 0) {
+		size_t used = strlen(out);
+		snprintf(out + used, outSize - used, "%ssize=%g", used ? " " : "", f.size);
+	}
+}
+
 /* ---------- request state machine ---------- */
 
 static void set_timer(BOOL on) {
@@ -484,6 +672,8 @@ static void set_timer(BOOL on) {
 static void start_next(void);
 
 static void finish_request(BOOL ok, const char *codeAndMessage) {
+	if (ok && g_restoreFormat.valid && !word_restore_format(&g_restoreFormat)) note_append("could not restore the typing format in Word");
+	g_restoreFormat.valid = FALSE;
 	if (ok) reply(g_current->id, "ok", g_note);
 	else reply(g_current->id, "error", codeAndMessage);
 	free_request(g_current == g_payload ? NULL : g_current);
@@ -512,7 +702,14 @@ static void begin_paste(void) {
 
 	INPUT inputs[8];
 	UINT count = add_chord(inputs, VK_CONTROL, 'V');
-	if ((g_current->flags & FLAG_RESET_WORD_FORMATTING) && is_word_window(target)) count += add_chord(inputs + count, VK_CONTROL, VK_SPACE);
+	if ((g_current->flags & FLAG_RESET_WORD_FORMATTING) && is_word_window(target)) {
+		/* Prefer giving the insertion point its exact previous formatting back
+		 * through Word's object model; Ctrl+Space (reset to style) is the fallback. */
+		if (!word_read_format(&g_restoreFormat) || !g_restoreFormat.valid) {
+			g_restoreFormat.valid = FALSE;
+			count += add_chord(inputs + count, VK_CONTROL, VK_SPACE);
+		}
+	}
 	if (SendInput(count, inputs, sizeof(INPUT)) != count) {
 		/* Payload is on the clipboard; restore happens via the normal path. */
 		return finish_request(FALSE, "sendinput_failed keyboard input was blocked");
@@ -555,6 +752,15 @@ static void start_next(void) {
 	r->next = NULL;
 	g_current = r;
 	g_note[0] = '\0';
+	if (r->isProbe) {
+		char note[512];
+		probe_note(note, sizeof note);
+		reply(r->id, "ok", note);
+		free_request(r);
+		g_current = NULL;
+		start_next();
+		return;
+	}
 	g_state = WAIT_MODIFIERS;
 	g_stateStart = GetTickCount64();
 	set_timer(TRUE);
@@ -608,6 +814,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, LPSTR cmdLine, int show) 
 	(void)cmdLine;
 	(void)show;
 	InitializeCriticalSection(&g_outLock);
+	CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 	g_cfHtml = RegisterClipboardFormatW(L"HTML Format");
 	g_cfRtf = RegisterClipboardFormatW(L"Rich Text Format");
 	g_cfExclude = RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing");

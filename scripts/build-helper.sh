@@ -9,5 +9,5 @@ OUT=com.monxas.bridgesuits.sdPlugin/native/bridge-paste-helper.exe
 mkdir -p "$(dirname "$OUT")"
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror -mwindows -static -s \
 	-Wl,--no-insert-timestamp \
-	-o "$OUT" native/bridge-paste-helper.c -luser32 -lkernel32 -ladvapi32 -lgdi32
+	-o "$OUT" native/bridge-paste-helper.c -luser32 -lkernel32 -ladvapi32 -lgdi32 -lole32 -loleaut32 -luuid
 echo "built $OUT ($(wc -c <"$OUT" | tr -d ' ') bytes)"

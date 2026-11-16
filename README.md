@@ -15,7 +15,7 @@ The inserted characters are the plain Unicode code points above (text, never emo
 
 ## Install
 
-1. Download or build `com.monxas.bridgesuits.streamDeckPlugin` (see *Build*).
+1. Download **[com.monxas.bridgesuits.streamDeckPlugin](https://github.com/monxas/bridge-rich-text/releases/latest/download/com.monxas.bridgesuits.streamDeckPlugin)** (latest release), or build it (see *Build*).
 2. Double-click it. Stream Deck installs it.
 3. In Stream Deck, drag **Bridge Suits → Insert Bridge Suit** onto four keys and choose a suit for each one in the property inspector.
 4. Click into a Word document and press a key.

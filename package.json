@@ -14,7 +14,8 @@
     "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.monxas.bridgesuits\"",
     "test:windows:prepare": "bash scripts/build-helper.sh && mkdir -p dist/windows-test && x86_64-w64-mingw32-gcc -O2 -Wall -static -o dist/windows-test/harness.exe test/windows/harness.c -luser32 && cp com.monxas.bridgesuits.sdPlugin/native/bridge-paste-helper.exe test/windows/run-wine.sh dist/windows-test/ && tsx test/windows/make-requests.ts dist/windows-test",
     "build:helper:macos": "bash scripts/build-helper-macos.sh",
-    "test:word:mac": "tsx test/macos/word-e2e.ts"
+    "test:word:mac": "tsx test/macos/word-e2e.ts",
+    "test:word:win": "tsx test/windows/word-e2e.ts"
   },
   "license": "MIT",
   "devDependencies": {

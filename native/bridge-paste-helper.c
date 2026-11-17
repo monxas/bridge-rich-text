@@ -29,7 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define HELPER_VERSION "1.1.0"
+#define HELPER_VERSION "1.1.1"
 
 #define WM_APP_REQUEST (WM_APP + 1)
 #define WM_APP_EOF (WM_APP + 2)
@@ -411,13 +411,16 @@ static void render_format(UINT format) {
 	}
 }
 
-/* Clipboard must be open. Our window becomes the owner. */
-static void write_payload(Request *r) {
+/* Clipboard must be open. Our window becomes the owner. With forWord, HTML is
+ * not offered when there is RTF: Word for Windows prefers HTML, and its HTML
+ * import treats Times New Roman 12 pt (the HTML defaults) as "no formatting"
+ * and gives the text the Normal style's font and size instead. */
+static void write_payload(Request *r, BOOL forWord) {
 	empty_own_clipboard();
 	release_payload();
 	g_payload = r;
 	if (r->rtf.len) SetClipboardData(g_cfRtf, NULL);
-	if (r->html.len) SetClipboardData(g_cfHtml, NULL);
+	if (r->html.len && !(forWord && r->rtf.len)) SetClipboardData(g_cfHtml, NULL);
 	SetClipboardData(CF_UNICODETEXT, NULL);
 	set_private_markers();
 	g_ownerLost = FALSE;
@@ -531,16 +534,77 @@ static HRESULT disp_put(IDispatch *obj, const WCHAR *name, VARIANT *value) {
 	return invoke_retry(obj, id, DISPATCH_PROPERTYPUT, &params, NULL);
 }
 
-/* Word.Application.Selection.Font of the running Word, or NULL. */
-static IDispatch *word_selection_font(void) {
+/* The running Word.Application, or NULL (not running, or not yet in the
+ * Running Object Table: KB 238610, until its window has lost the focus once). */
+static IDispatch *word_app(void) {
 	CLSID clsid;
 	IUnknown *unk = NULL;
-	IDispatch *app = NULL, *font = NULL;
-	VARIANT selection, fontVar;
+	IDispatch *app = NULL;
 	if (FAILED(CLSIDFromProgID(L"Word.Application", &clsid)) || FAILED(GetActiveObject(&clsid, NULL, &unk))) return NULL;
 	HRESULT hr = unk->lpVtbl->QueryInterface(unk, &IID_IDispatch, (void **)&app);
 	unk->lpVtbl->Release(unk);
-	if (FAILED(hr)) return NULL;
+	return SUCCEEDED(hr) ? app : NULL;
+}
+
+/* Word.Application.Options, or NULL. */
+static IDispatch *word_options(void) {
+	IDispatch *app = word_app(), *options = NULL;
+	if (!app) return NULL;
+	VARIANT v;
+	if (SUCCEEDED(disp_get(app, L"Options", &v)) && v.vt == VT_DISPATCH) options = v.pdispVal;
+	else VariantClear(&v);
+	app->lpVtbl->Release(app);
+	return options;
+}
+
+/*
+ * Word's "Pasting from other programs" option (Options.PasteFormatFromExternalSource).
+ * With Merge Formatting (wdMatchDestinationFormatting, 1) or Keep Text Only
+ * (2), Word drops the pasted colour, so the suits arrive black. During our own
+ * Ctrl+V it is set to Keep Source Formatting (wdKeepSourceFormatting, 0), and
+ * the user's value is put back when the request finishes.
+ */
+#define WD_KEEP_SOURCE_FORMATTING 0
+static LONG g_savedPasteOption;
+static BOOL g_pasteOptionChanged;
+
+static void word_force_source_formatting(void) {
+	IDispatch *options = word_options();
+	if (!options) return note_append("could not read Word's paste option");
+	VARIANT v;
+	if (SUCCEEDED(disp_get(options, L"PasteFormatFromExternalSource", &v)) && SUCCEEDED(VariantChangeType(&v, &v, 0, VT_I4)) &&
+	    v.lVal != WD_KEEP_SOURCE_FORMATTING) {
+		LONG previous = v.lVal;
+		VariantInit(&v);
+		v.vt = VT_I4;
+		v.lVal = WD_KEEP_SOURCE_FORMATTING;
+		if (SUCCEEDED(disp_put(options, L"PasteFormatFromExternalSource", &v))) {
+			g_savedPasteOption = previous;
+			g_pasteOptionChanged = TRUE;
+		} else note_append("could not switch Word to keep source formatting");
+	}
+	VariantClear(&v);
+	options->lpVtbl->Release(options);
+}
+
+static void word_restore_paste_option(void) {
+	if (!g_pasteOptionChanged) return;
+	g_pasteOptionChanged = FALSE;
+	IDispatch *options = word_options();
+	VARIANT v;
+	VariantInit(&v);
+	v.vt = VT_I4;
+	v.lVal = g_savedPasteOption;
+	if (!options || FAILED(disp_put(options, L"PasteFormatFromExternalSource", &v)))
+		emit_event("word_option_not_restored", "could not restore Word's Pasting from other programs option");
+	if (options) options->lpVtbl->Release(options);
+}
+
+/* Word.Application.Selection.Font of the running Word, or NULL. */
+static IDispatch *word_selection_font(void) {
+	IDispatch *app = word_app(), *font = NULL;
+	VARIANT selection, fontVar;
+	if (!app) return NULL;
 	if (SUCCEEDED(disp_get(app, L"Selection", &selection)) && selection.vt == VT_DISPATCH && selection.pdispVal) {
 		if (SUCCEEDED(disp_get(selection.pdispVal, L"Font", &fontVar)) && fontVar.vt == VT_DISPATCH) font = fontVar.pdispVal;
 		VariantClear(&selection);
@@ -768,6 +832,7 @@ static void start_next(void);
 static void finish_request(BOOL ok, const char *codeAndMessage) {
 	if (ok && g_restoreFormat.valid && !word_restore_format(&g_restoreFormat)) note_append("could not restore the typing format in Word");
 	g_restoreFormat.valid = FALSE;
+	word_restore_paste_option();
 	if (ok) reply(g_current->id, "ok", g_note);
 	else reply(g_current->id, "error", codeAndMessage);
 	free_request(g_current == g_payload ? NULL : g_current);
@@ -791,11 +856,12 @@ static void begin_paste(void) {
 
 	if (!open_clipboard()) return finish_request(FALSE, "clipboard_busy clipboard is locked by another application");
 	if (!g_haveSnapshot) take_snapshot();
-	write_payload(g_current);
+	write_payload(g_current, is_word_window(target));
 	CloseClipboard();
 
 	INPUT inputs[8];
 	UINT count = add_chord(inputs, VK_CONTROL, 'V');
+	if (is_word_window(target) && (g_current->rtf.len || g_current->html.len)) word_force_source_formatting();
 	if ((g_current->flags & FLAG_RESET_WORD_FORMATTING) && is_word_window(target)) {
 		/* Prefer giving the insertion point its exact previous formatting back
 		 * through Word's object model; Ctrl+Space (reset to style) is the fallback. */
@@ -889,9 +955,10 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 	case WM_RENDERALLFORMATS:
 		if (OpenClipboard(hwnd)) {
 			if (GetClipboardOwner() == hwnd) {
+				/* Only what write_payload offered (HTML is left out for Word). */
 				render_format(CF_UNICODETEXT);
-				render_format(g_cfHtml);
-				render_format(g_cfRtf);
+				if (IsClipboardFormatAvailable(g_cfHtml)) render_format(g_cfHtml);
+				if (IsClipboardFormatAvailable(g_cfRtf)) render_format(g_cfRtf);
 			}
 			CloseClipboard();
 		}

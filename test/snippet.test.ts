@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { needsProbe, previewOf, type SnippetRun, snippetKeySvg, snippetRequestFor, snippetRichText } from "../src/snippet";
+import { isSymbolFont, needsProbe, previewOf, type SnippetRun, snippetKeySvg, snippetRequestFor, snippetRichText } from "../src/snippet";
 
 const RUNS: SnippetRun[] = [
 	{ text: "♥", color: "#DC0000", font: "Calibri", sizePt: 11, bold: true, italic: false },
@@ -14,6 +14,18 @@ describe("snippetRichText", () => {
 			{ text: "♥", color: "#DC0000", font: "Segoe UI Symbol", sizePt: 12, bold: true, italic: false },
 			{ text: " 1NT", color: undefined, font: "Aptos", sizePt: 12, bold: false, italic: false },
 		]);
+	});
+
+	it("always keeps a symbol font (Wingdings 232 is an arrow, not è), sized like the cursor", () => {
+		// Word's Insert > Symbol > Wingdings arrow, as captured from real Word for Windows.
+		const arrow: SnippetRun[] = [{ text: "è", color: "#111111", font: "Wingdings", sizePt: 11, bold: false, italic: false }];
+		const cursor = { font: "Segoe UI Symbol", docFont: "Aptos", sizePt: 14 };
+		expect(snippetRichText(arrow, { color: true, style: true, font: false, size: false }, cursor)).toEqual([
+			{ text: "è", color: "#111111", font: "Wingdings", sizePt: 14, bold: false, italic: false },
+		]);
+		expect(isSymbolFont("Wingdings 3")).toBe(true);
+		expect(isSymbolFont("Webdings")).toBe(true);
+		expect(isSymbolFont("Calibri")).toBe(false);
 	});
 
 	it("keeps everything captured when asked", () => {

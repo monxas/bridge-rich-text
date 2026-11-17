@@ -56,6 +56,13 @@ export function needsProbe(s: SnippetSettings): boolean {
 const SUIT_CHARS = /[♠♥♦♣♤♡♢♧]/u;
 
 /**
+ * Fonts whose characters are pictures, not letters: Wingdings 232 is an arrow,
+ * but "è" in any other font. Their font is always kept, whatever keepFont says.
+ */
+const SYMBOL_FONTS = /^(wingdings( [23])?|webdings|symbol|marlett|mt extra|zapf ?dingbats|segoe mdl2 assets|segoe fluent icons)$/i;
+export const isSymbolFont = (font: string | undefined) => !!font && SYMBOL_FONTS.test(font.trim());
+
+/**
  * The runs to insert: captured attributes that are kept, the cursor's font
  * and size for the others. Runs with suit symbols get the probe's glyph-safe
  * font; other text gets the document font as is.
@@ -66,7 +73,7 @@ export function snippetRichText(runs: readonly SnippetRun[], keep: KeepOptions, 
 		return {
 			text: run.text,
 			color: keep.color ? run.color : undefined,
-			font: keep.font ? run.font : cursorFont,
+			font: keep.font || isSymbolFont(run.font) ? run.font : cursorFont,
 			sizePt: keep.size ? run.sizePt : cursor.sizePt,
 			bold: keep.style ? run.bold : undefined,
 			italic: keep.style ? run.italic : undefined,

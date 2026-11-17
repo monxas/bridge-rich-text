@@ -23,6 +23,10 @@ describe("snippetRichText", () => {
 		expect(snippetRichText(arrow, { color: true, style: true, font: false, size: false }, cursor)).toEqual([
 			{ text: "è", color: "#111111", font: "Wingdings", sizePt: 14, bold: false, italic: false },
 		]);
+		// Key image: the picture's code point in the symbol font, not the letter.
+		const svg = snippetKeySvg(arrow);
+		expect(svg).toContain(`font-family="Wingdings"></tspan>`);
+		expect(svg).not.toContain("è");
 		expect(isSymbolFont("Wingdings 3")).toBe(true);
 		expect(isSymbolFont("Webdings")).toBe(true);
 		expect(isSymbolFont("Calibri")).toBe(false);

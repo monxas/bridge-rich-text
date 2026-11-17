@@ -155,10 +155,15 @@ export function snippetKeySvg(runs: readonly SnippetRun[] | undefined): string {
 		left -= part.length;
 		const color = safeColor(run.color, "#FFFFFF");
 		// U+FE0E asks for the text (not emoji) presentation of symbols such as ♥.
-		const body = escapeXml(part.join("")).replace(/([♠♥♦♣])/gu, "$1\uFE0E");
+		// Symbol fonts (Wingdings...) draw their pictures at U+F020-U+F0FF; "è" itself
+		// would be drawn as a letter by a fallback font.
+		const symbol = isSymbolFont(run.font);
+		const glyphs = symbol ? part.join("").replace(/[ -ÿ]/g, (c) => String.fromCharCode(0xf000 + c.charCodeAt(0))) : part.join("");
+		const body = escapeXml(glyphs).replace(/([♠♥♦♣])/gu, "$1\uFE0E");
 		const weight = run.bold ? ` font-weight="bold"` : "";
 		const style = run.italic ? ` font-style="italic"` : "";
-		spans.push(`<tspan fill="${color}"${outline(color)}${weight}${style}>${body}</tspan>`);
+		const family = symbol ? ` font-family="${escapeXml(run.font!)}"` : "";
+		spans.push(`<tspan fill="${color}"${outline(color)}${weight}${style}${family}>${body}</tspan>`);
 	}
 	if (chars.length > shown) spans.push(`<tspan fill="#9A9A9A">…</tspan>`);
 	const font = visible.find((r) => r.font)?.font;

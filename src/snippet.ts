@@ -123,6 +123,9 @@ function luminance(hex: string): number {
 	return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+/** Black and dark greys (every channel low); dark reds, greens and blues are not. */
+const nearBlack = (hex: string) => [1, 3, 5].every((i) => parseInt(hex.slice(i, i + 2), 16) < 0x50);
+
 const SUIT_BY_SYMBOL = new Map(Object.entries(BRIDGE_SUITS).map(([k, v]) => [v.symbol, k as BridgeSuit]));
 
 /**
@@ -153,7 +156,10 @@ export function snippetKeySvg(runs: readonly SnippetRun[] | undefined): string {
 		if (left <= 0) break;
 		const part = [...run.text.replace(/[\uFE0E\uFE0F]/g, "").replace(/\s+/g, " ")].slice(0, left);
 		left -= part.length;
-		const color = safeColor(run.color, "#FFFFFF");
+		// On the dark key, text too dark to read (black, #111111...) is drawn white;
+		// the colour pasted into the document is unchanged.
+		const captured = safeColor(run.color, "#FFFFFF");
+		const color = nearBlack(captured) ? "#FFFFFF" : captured;
 		// U+FE0E asks for the text (not emoji) presentation of symbols such as ♥.
 		// Symbol fonts (Wingdings...) draw their pictures at U+F020-U+F0FF; "è" itself
 		// would be drawn as a letter by a fallback font.

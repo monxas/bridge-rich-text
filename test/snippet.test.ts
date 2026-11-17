@@ -25,7 +25,7 @@ describe("snippetRichText", () => {
 		]);
 		// Key image: the picture's code point in the symbol font, not the letter.
 		const svg = snippetKeySvg(arrow);
-		expect(svg).toContain(`font-family="Wingdings"></tspan>`);
+		expect(svg).toContain(`<tspan fill="#FFFFFF" font-family="Wingdings"></tspan>`);
 		expect(svg).not.toContain("è");
 		expect(isSymbolFont("Wingdings 3")).toBe(true);
 		expect(isSymbolFont("Webdings")).toBe(true);
@@ -67,7 +67,9 @@ describe("key image and preview", () => {
 		expect(snippetKeySvg([{ text: "♣", color: "#123456" }])).toMatch(/<path d="[^"]+" fill="#123456"/);
 		const svg = snippetKeySvg([{ text: "1NT<x>", color: "#000000", bold: true }]);
 		expect(svg).toMatch(/>1NT&#60;<\/tspan><tspan fill="#9A9A9A">…</);
-		expect(svg).toContain('stroke="#9A9A9A"'); // dark text gets an outline
+		expect(svg).toContain('<tspan fill="#FFFFFF" font-weight="bold">'); // dark text is drawn white on the key
+		expect(snippetKeySvg([{ text: "x", color: "#C00000" }])).toContain('<tspan fill="#C00000"'); // dark red stays red
+		expect(snippetKeySvg([{ text: "x", color: "#DC0000" }])).toContain('<tspan fill="#DC0000"'); // suit red stays red
 		expect(snippetKeySvg(undefined)).toContain("Capture");
 	});
 

@@ -8,12 +8,14 @@ import streamDeck, {
 import { suitKeyImage } from "../render";
 import { type BridgeSuitSettings, pasteRequestFor } from "../suit-payload";
 import { resolveSuit } from "../suits";
+import type { Captured } from "../capture";
 import type { InsertionFormat, PasteRequest } from "../paste-helper";
 
 /** What the action needs from the platform helper. */
 export interface Inserter {
 	probe(): Promise<InsertionFormat>;
 	paste(request: PasteRequest): Promise<string>;
+	capture(): Promise<Captured>;
 }
 
 @action({ UUID: "com.monxas.bridgesuits.insert" })

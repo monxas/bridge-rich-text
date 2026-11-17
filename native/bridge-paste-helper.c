@@ -29,7 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define HELPER_VERSION "1.0.0"
+#define HELPER_VERSION "1.1.0"
 
 #define WM_APP_REQUEST (WM_APP + 1)
 #define WM_APP_EOF (WM_APP + 2)
@@ -56,6 +56,7 @@ typedef struct Request {
 	Blob html; /* complete CF_HTML document, UTF-8 */
 	Blob rtf;
 	BOOL isProbe;
+	BOOL isCapture;
 	struct Request *next;
 } Request;
 
@@ -203,12 +204,17 @@ static DWORD WINAPI stdin_reader(LPVOID unused) {
 		while ((nl = memchr(start, '\n', len - (size_t)(start - buf))) != NULL) {
 			*nl = '\0';
 			size_t lineLen = strlen(start);
-			if (lineLen > 6 && strcmp(start + lineLen - 6, " probe") == 0 && lineLen - 6 < 64) {
-				start[lineLen - 6] = '\0';
+			if (lineLen && start[lineLen - 1] == '\r') start[--lineLen] = '\0';
+			const char *verb = NULL;
+			if (lineLen > 6 && strcmp(start + lineLen - 6, " probe") == 0) verb = " probe";
+			else if (lineLen > 8 && strcmp(start + lineLen - 8, " capture") == 0) verb = " capture";
+			if (verb && lineLen - strlen(verb) < 64) {
+				start[lineLen - strlen(verb)] = '\0';
 				Request *r = calloc(1, sizeof *r);
 				if (r) {
 					strcpy(r->id, start);
-					r->isProbe = TRUE;
+					r->isProbe = verb[1] == 'p';
+					r->isCapture = verb[1] == 'c';
 					PostMessage(g_hwnd, WM_APP_REQUEST, 0, (LPARAM)r);
 				}
 			} else if (*start) {
@@ -648,17 +654,105 @@ static void probe_note(char *out, size_t outSize) {
 	WordFormat f;
 	if (!word_read_format(&f)) return;
 	if (f.name[0]) {
-		char utf8[256], b64[400];
-		int n = WideCharToMultiByte(CP_UTF8, 0, suit_font_for(f.name), -1, utf8, sizeof utf8, NULL, NULL);
-		if (n > 1) {
-			b64_encode((const BYTE *)utf8, (size_t)n - 1, b64, sizeof b64);
-			snprintf(out, outSize, "font=%s", b64);
+		/* font = a font with ♠♥♦♣ glyphs (the document font if it has them);
+		 * doc = the document font itself, for snippets that are not suits. */
+		const WCHAR *names[2] = {suit_font_for(f.name), f.name};
+		const char *keys[2] = {"font", "doc"};
+		for (int k = 0; k < 2; k++) {
+			char utf8[256], b64[400];
+			int n = WideCharToMultiByte(CP_UTF8, 0, names[k], -1, utf8, sizeof utf8, NULL, NULL);
+			if (n > 1) {
+				b64_encode((const BYTE *)utf8, (size_t)n - 1, b64, sizeof b64);
+				size_t used = strlen(out);
+				snprintf(out + used, outSize - used, "%s%s=%s", used ? " " : "", keys[k], b64);
+			}
 		}
 	}
 	if (f.size > 0) {
 		size_t used = strlen(out);
 		snprintf(out + used, outSize - used, "%ssize=%g", used ? " " : "", f.size);
 	}
+}
+
+/* ---------- clipboard capture ---------- */
+
+#define CAPTURE_MAX_BYTES (4u << 20)
+
+/* Appends " key=<base64>" to *out (grown with realloc). Returns FALSE on OOM. */
+static BOOL append_b64_field(char **out, size_t *len, const char *key, const BYTE *data, size_t n) {
+	size_t need = *len + strlen(key) + 2 + (n + 2) / 3 * 4 + 2; /* b64_encode wants one spare byte */
+	char *grown = realloc(*out, need);
+	if (!grown) return FALSE;
+	*out = grown;
+	*len += (size_t)sprintf(*out + *len, " %s=", key);
+	b64_encode(data, n, *out + *len, need - *len);
+	*len += strlen(*out + *len);
+	return TRUE;
+}
+
+/* Bytes of a clipboard format up to its first NUL (RTF and CF_HTML are NUL-terminated). */
+static void clipboard_bytes(UINT format, BYTE **data, size_t *n) {
+	*data = NULL;
+	*n = 0;
+	HANDLE h = GetClipboardData(format);
+	const BYTE *p = h ? GlobalLock(h) : NULL;
+	if (!p) return;
+	SIZE_T size = GlobalSize(h);
+	size_t len = 0;
+	while (len < size && p[len]) len++;
+	if (len && len <= CAPTURE_MAX_BYTES && (*data = malloc(len))) {
+		memcpy(*data, p, len);
+		*n = len;
+	}
+	GlobalUnlock(h);
+}
+
+/*
+ * Replies "<id> ok [text=<b64>] [rtf=<b64>] [html=<b64>]" with what is on the
+ * clipboard right now (text as UTF-8, RTF and CF_HTML as raw bytes), so the
+ * plugin can turn something the user copied into a custom snippet.
+ */
+static void answer_capture(const char *id) {
+	restore_clipboard(); /* never capture our own temporary payload */
+	if (!open_clipboard()) return reply(id, "error", "clipboard_busy clipboard is locked by another application");
+	BYTE *text = NULL, *rtf = NULL, *html = NULL;
+	size_t textLen = 0, rtfLen = 0, htmlLen = 0;
+	HANDLE h = GetClipboardData(CF_UNICODETEXT);
+	const WCHAR *w = h ? GlobalLock(h) : NULL;
+	if (w) {
+		int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+		if (n > 1 && (size_t)n <= CAPTURE_MAX_BYTES && (text = malloc((size_t)n))) {
+			WideCharToMultiByte(CP_UTF8, 0, w, -1, (char *)text, n, NULL, NULL);
+			textLen = (size_t)n - 1;
+		}
+		GlobalUnlock(h);
+	}
+	clipboard_bytes(g_cfRtf, &rtf, &rtfLen);
+	clipboard_bytes(g_cfHtml, &html, &htmlLen);
+	CloseClipboard();
+
+	size_t len = strlen(id) + 3;
+	char *line = malloc(len + 1);
+	BOOL ok = line != NULL;
+	if (ok) sprintf(line, "%s ok", id);
+	if (ok && textLen) ok = append_b64_field(&line, &len, "text", text, textLen);
+	if (ok && rtfLen) ok = append_b64_field(&line, &len, "rtf", rtf, rtfLen);
+	if (ok && htmlLen) ok = append_b64_field(&line, &len, "html", html, htmlLen);
+	if (ok) {
+		char *grown = realloc(line, len + 2);
+		ok = grown != NULL;
+		if (ok) {
+			line = grown;
+			line[len++] = '\n';
+			line[len] = '\0';
+			write_line(line);
+		}
+	}
+	if (!ok) reply(id, "error", "out_of_memory clipboard contents too large");
+	free(line);
+	free(text);
+	free(rtf);
+	free(html);
 }
 
 /* ---------- request state machine ---------- */
@@ -752,10 +846,13 @@ static void start_next(void) {
 	r->next = NULL;
 	g_current = r;
 	g_note[0] = '\0';
-	if (r->isProbe) {
+	if (r->isProbe || r->isCapture) {
 		char note[512];
-		probe_note(note, sizeof note);
-		reply(r->id, "ok", note);
+		if (r->isCapture) answer_capture(r->id);
+		else {
+			probe_note(note, sizeof note);
+			reply(r->id, "ok", note);
+		}
 		free_request(r);
 		g_current = NULL;
 		start_next();

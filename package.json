@@ -1,6 +1,6 @@
 {
   "name": "bridge-rich-text",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Stream Deck plugin: insert coloured bridge suit symbols as rich text",
   "scripts": {
     "build": "rollup -c",

@@ -18,7 +18,7 @@ import ApplicationServices
 import Carbon.HIToolbox
 import CoreText
 
-let helperVersion = "1.0.0"
+let helperVersion = "1.1.0"
 let flagResetWordFormatting: UInt32 = 1
 let modifierWait: TimeInterval = 1.0
 let pasteTimeout: TimeInterval = 2.0
@@ -35,6 +35,7 @@ struct Request {
 	let html: Data?
 	let rtf: Data?
 	var isProbe = false
+	var isCapture = false
 }
 
 func decodeField(_ field: Substring) -> Data?? {
@@ -50,6 +51,9 @@ func parseRequest(_ line: String) -> Result<Request, BadRequest> {
 	let id = fields.first.map(String.init) ?? "?"
 	if fields.count == 2, fields[1] == "probe", id.count < 64 {
 		return .success(Request(id: id, flags: 0, text: Data(), html: nil, rtf: nil, isProbe: true))
+	}
+	if fields.count == 2, fields[1] == "capture", id.count < 64 {
+		return .success(Request(id: id, flags: 0, text: Data(), html: nil, rtf: nil, isCapture: true))
 	}
 	guard fields.count == 5, id.count < 64, let flags = UInt32(fields[1]),
 		let text = decodeField(fields[2]), let html = decodeField(fields[3]), let rtf = decodeField(fields[4]),
@@ -238,6 +242,7 @@ final class Helper: NSObject, NSPasteboardItemDataProvider {
 		note = []
 		formatToRestore = nil
 		if current!.isProbe { return answerProbe() }
+		if current!.isCapture { return answerCapture() }
 		state = .waitModifiers
 		stateStart = Date()
 		if timer == nil {
@@ -250,10 +255,30 @@ final class Helper: NSObject, NSPasteboardItemDataProvider {
 		let format = WordAutomation.insertionFormat()
 		var parts: [String] = []
 		if let name = suitFont(for: format?.name) { parts.append("font=\(Data(name.utf8).base64EncodedString())") }
+		if let name = format?.name, !name.isEmpty { parts.append("doc=\(Data(name.utf8).base64EncodedString())") }
 		if let size = format?.size { parts.append("size=\(size)") }
 		note = parts
 		state = .waitPaste  // so finish() treats it like a completed request
 		finish(ok: true)
+	}
+
+	/// "<id> ok [text=<b64>] [rtf=<b64>] [html=<b64>]": what is on the pasteboard now,
+	/// so the plugin can turn something the user copied into a custom snippet.
+	func answerCapture() {
+		restore()  // never capture our own temporary payload
+		let maxBytes = 4 << 20
+		var line = "\(current!.id) ok"
+		let fields: [(String, Data?)] = [
+			("text", pasteboard.string(forType: textType).map { Data($0.utf8) }),
+			("rtf", pasteboard.data(forType: rtfType)),
+			("html", pasteboard.data(forType: htmlType)),
+		]
+		for (key, data) in fields {
+			if let data, !data.isEmpty, data.count <= maxBytes { line += " \(key)=\(data.base64EncodedString())" }
+		}
+		writeLine(line)
+		current = nil
+		startNext()
 	}
 
 	func finish(ok: Bool, _ detail: String = "") {

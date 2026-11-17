@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
+import type { Captured } from "./capture";
 import type { ClipboardPayload } from "./richtext";
 
 /**
@@ -20,8 +21,14 @@ import type { ClipboardPayload } from "./richtext";
  *   <id> ok [note]
  *   <id> error <code> <message>
  *
- * A probe's note is "font=<base64 UTF-8 name> size=<points>" (either part may
- * be missing). The helper may emit unsolicited lines: "ready <version>" and "event <kind> <message>".
+ * A probe's note is "font=<base64 UTF-8 name> doc=<base64 UTF-8 name> size=<points>"
+ * (any part may be missing; font has ♠♥♦♣ glyphs, doc is the document's own font).
+ *
+ * Or a capture of what is on the clipboard now:
+ *
+ *   <id> capture
+ *
+ * answered with "<id> ok [text=<b64 UTF-8>] [rtf=<b64>] [html=<b64>]". The helper may emit unsolicited lines: "ready <version>" and "event <kind> <message>".
  */
 
 export const FLAG_RESET_WORD_FORMATTING = 1;
@@ -62,7 +69,10 @@ export function encodeRequest(id: string, request: PasteRequest): string {
 
 /** Formatting at the insertion point, as reported by a probe. */
 export interface InsertionFormat {
+	/** A font with ♠♥♦♣ glyphs: the document font, or a fallback when it has none. */
 	font?: string;
+	/** The document font at the insertion point, as is. */
+	docFont?: string;
 	sizePt?: number;
 }
 
@@ -71,7 +81,22 @@ export function parseProbeNote(note: string): InsertionFormat {
 	for (const part of note.split(" ")) {
 		const [key, value] = part.split("=", 2);
 		if (key === "font" && value) result.font = Buffer.from(value, "base64").toString("utf8") || undefined;
+		if (key === "doc" && value) result.docFont = Buffer.from(value, "base64").toString("utf8") || undefined;
 		if (key === "size" && value && Number(value) > 0) result.sizePt = Number(value);
+	}
+	return result;
+}
+
+export function parseCaptureNote(note: string): Captured {
+	const result: Captured = {};
+	for (const part of note.split(" ")) {
+		const [key, value] = part.split("=", 2);
+		if (!value) continue;
+		const bytes = Buffer.from(value, "base64");
+		// RTF is 7-bit with \'hh escapes; latin1 keeps any stray 8-bit byte as is.
+		if (key === "text") result.text = bytes.toString("utf8");
+		if (key === "rtf") result.rtf = bytes.toString("latin1");
+		if (key === "html") result.html = bytes.toString("utf8");
 	}
 	return result;
 }
@@ -108,6 +133,11 @@ export class PasteHelper {
 	/** Places the payload on the clipboard, pastes it, restores the clipboard. Resolves with the helper's note. */
 	paste(request: PasteRequest): Promise<string> {
 		return this.send((id) => encodeRequest(id, request));
+	}
+
+	/** Text, RTF and HTML currently on the clipboard (never the helper's own temporary payload). */
+	async capture(): Promise<Captured> {
+		return parseCaptureNote(await this.send((id) => `${id} capture\n`));
 	}
 
 	/** Font and size at the insertion point of the focused Word document; empty for other applications. */

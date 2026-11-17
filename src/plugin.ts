@@ -4,6 +4,7 @@ import { chmodSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Inserter, InsertBridgeSuit } from "./actions/insert-bridge-suit";
+import { InsertSnippet } from "./actions/insert-snippet";
 import { PasteError, PasteHelper } from "./paste-helper";
 
 streamDeck.logger.setLevel("info");
@@ -36,8 +37,9 @@ if (helperName) {
 	process.on("exit", () => helper.dispose());
 } else {
 	const unsupported = () => Promise.reject(new PasteError("unsupported_platform", `rich-text paste is not supported on ${process.platform}`));
-	inserter = { probe: unsupported, paste: unsupported };
+	inserter = { probe: unsupported, paste: unsupported, capture: unsupported };
 }
 
 streamDeck.actions.registerAction(new InsertBridgeSuit(inserter));
+streamDeck.actions.registerAction(new InsertSnippet(inserter));
 streamDeck.connect();

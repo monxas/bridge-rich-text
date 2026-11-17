@@ -35,6 +35,24 @@ Nothing else needs installing: the plugin runs on the Node.js runtime that ships
 | Word: use the font and size at the cursor | on | Asks Word for the font and size at the insertion point (macOS: Apple Events; Windows: Word's COM object model — no VBA, nothing installed in Word) and inserts the suit in them. If that font has no ♠♥♦♣ glyphs (Aptos, Calibri…), a text font that has them is used (macOS: Arial; Windows: Segoe UI Symbol), because otherwise Word for Mac draws them with *Apple Color Emoji*, which ignores the colour. |
 | Word: keep the text typed next uncoloured | on | After the paste, Word's insertion point gets its previous font, size and colour back through the same interface. Only if that fails (macOS without the Automation permission; Windows when Word is not reachable over COM) it sends `Ctrl+Space`, which resets the insertion point to the paragraph style, so manual formatting such as bold or a manually chosen font is not carried into the next characters. |
 
+### Captured text (any symbol or short text)
+
+The second action, **Insert Captured Text**, pastes whatever you captured for that key: another symbol, `1NT`, `♠AKQ`, a short phrase.
+
+1. Copy the text in Word (or any app), formatted the way you want it.
+2. Open the key's settings and press **Capture clipboard**. The preview shows what the key will insert, and the key shows the text itself.
+3. Press the key in a document.
+
+| Setting | Default | Purpose |
+|---|---|---|
+| Keep: Colour | on | Use the captured colour. Off: inherit the document's colour. |
+| Keep: Bold / italic | on | Use the captured bold/italic. |
+| Keep: Font | off | Off: the font at Word's cursor (suit symbols get a glyph-safe fallback, as above). On: the captured font. |
+| Keep: Size | off | Off: the size at Word's cursor. On: the captured size. |
+| Clipboard, Word | as above | Same as for the suits. |
+
+Capture reads the clipboard's RTF (Word, LibreOffice, Pages…), else its HTML (browsers), else plain text; the preview says when only plain text was available. Only character formatting is kept (colour, font, size, bold, italic, max 500 characters); suits inserted with Word's *Symbol* font are converted to Unicode ♠♥♦♣. The snippet is stored in the key's settings, so it travels with exported profiles.
+
 ## How it works
 
 ```text
@@ -108,7 +126,7 @@ npm run watch                                          # rebuild + restart the p
 
 | Level | What | How | Status |
 |---|---|---|---|
-| Unit (28) | Suit table, CF_HTML byte offsets (incl. multibyte/emoji), RTF encoding, font/size in payloads, font-name injection guards, per-platform formats, key SVGs, helper protocol, client restart/timeout | `npm test` (Vitest, any OS) | automated, passing |
+| Unit (51) | Suit table, RTF/HTML capture parsing (Word, Cocoa, Symbol font, browsers), captured-text options, key images, preview, CF_HTML byte offsets (incl. multibyte/emoji), RTF encoding, font/size in payloads, font-name injection guards, per-platform formats, key SVGs, helper protocol, client restart/timeout | `npm test` (Vitest, any OS) | automated, passing |
 | Windows helper end-to-end (18 checks) | Real `bridge-paste-helper.exe` + a Win32 harness that plays a focused "Word" window (`OpusApp` class) and reads the clipboard on Ctrl+V: HTML/RTF/text received, Ctrl+Space only when enabled, 3 queued presses, original clipboard (text + private format) restored, newer clipboard content left alone, unread paste reported, font probe answered | `npm run test:windows:prepare`, then `test/windows/run-wine.sh dist/windows-test` under Wine on Linux (null graphics driver, no real desktop touched) | automated, passing under Wine 11 (Proton Experimental) |
 | **Microsoft Word for Mac** | Real Word, real helper, real ⌘V: four suits per document after text in Arial 14, Aptos 11, Times New Roman 10.5, Calibri 12; then `AKQ` typed after each suit; .docx inspected | `npm run test:word:mac` (Word comes to the front; don't type while it runs) | **passed in Word for Mac** (8/8 variants in one run, 32 real presses): colour exact, suit in document font (Arial, Times) or Arial fallback (Aptos, Calibri), size kept, typed text keeps document font/size and no colour, clipboard restored |
 | Microsoft Word for Windows | Same, on Windows | manual, [docs/word-manual-test.md](docs/word-manual-test.md) | **not performed**: no Windows + Word available |
@@ -119,11 +137,14 @@ npm run watch                                          # rebuild + restart the p
 
 ```text
 src/suits.ts                     suit symbols + colours (single source)
+src/capture.ts                   clipboard RTF / HTML / text → snippet runs
+src/snippet.ts                   captured-text settings → paste request, key image, preview
 src/richtext.ts                  RichText → CF_UNICODETEXT / CF_HTML / RTF
 src/suit-payload.ts              action settings → paste request
 src/render.ts                    key image SVGs
 src/paste-helper.ts              persistent helper client + line protocol
-src/actions/insert-bridge-suit.ts Stream Deck action
+src/actions/insert-bridge-suit.ts Stream Deck action (suits)
+src/actions/insert-snippet.ts    Stream Deck action (captured text)
 src/plugin.ts                    entry point
 native/bridge-paste-helper.c     Windows helper (clipboard + SendInput)
 native/macos/BridgePasteHelper.swift  macOS helper (pasteboard + CGEvent + Word Apple Events)

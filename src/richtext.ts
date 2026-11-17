@@ -1,9 +1,9 @@
 /**
  * Clipboard payload generation for small rich-text snippets.
  *
- * A snippet is a list of runs; each run is plain text with an optional
- * foreground colour. Only the colour is ever specified so that the target
- * application keeps its own font family and size where it can.
+ * A snippet is a list of runs: plain text with optional colour, font, size,
+ * bold and italic. Only what a run sets is written, so the target
+ * application keeps its own formatting for everything else.
  */
 export interface RichRun {
 	text: string;
@@ -17,6 +17,9 @@ export interface RichRun {
 	font?: string;
 	/** Font size in points. Omitted = not specified. */
 	sizePt?: number;
+	/** Omitted = not specified (inherit). */
+	bold?: boolean;
+	italic?: boolean;
 }
 
 export type RichText = readonly RichRun[];
@@ -73,6 +76,8 @@ export function htmlFragment(rich: RichText): string {
 				parseColor(run.color); // validate, never inject arbitrary CSS
 				style.push(`color:${run.color.toUpperCase()}`);
 			}
+			if (run.bold !== undefined) style.push(`font-weight:${run.bold ? "bold" : "normal"}`);
+			if (run.italic !== undefined) style.push(`font-style:${run.italic ? "italic" : "normal"}`);
 			return style.length ? `<span style="${style.join(";")}">${text}</span>` : text;
 		})
 		.join("");
@@ -122,7 +127,7 @@ function rtfEscape(text: string): string {
 }
 
 /**
- * Minimal RTF: colour and font tables and \\cfN / \\fN / \\fsN runs only. No
+ * Minimal RTF: colour and font tables and \\cfN / \\fN / \\fsN / \\b / \\i runs only. No
  * paragraph marks, so the receiving document keeps its own paragraph.
  */
 export function buildRtf(rich: RichText): string {
@@ -139,6 +144,8 @@ export function buildRtf(rich: RichText): string {
 			if (run.font) props += `\\f${indexOf(fonts, checkFont(run.font))}`;
 			if (run.sizePt !== undefined) props += `\\fs${checkSize(run.sizePt) * 2}`;
 			if (run.color) props += `\\cf${indexOf(colors, run.color.toUpperCase()) + 1}`;
+			if (run.bold !== undefined) props += run.bold ? "\\b" : "\\b0";
+			if (run.italic !== undefined) props += run.italic ? "\\i" : "\\i0";
 			return props ? `{${props} ${text}}` : text;
 		})
 		.join("");

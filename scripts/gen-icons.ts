@@ -3,6 +3,7 @@
 import { Resvg } from "@resvg/resvg-js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { KEY_BACKGROUND, SUIT_PATHS, suitKeySvg } from "../src/render";
+import { snippetKeySvg } from "../src/snippet";
 import { BRIDGE_SUITS, type BridgeSuit } from "../src/suits";
 
 const dir = "com.monxas.bridgesuits.sdPlugin/imgs";
@@ -25,6 +26,12 @@ write("actions/insert/icon.svg", svg(20, grid(() => "#FFFFFF")));
 write("plugin/category-icon.svg", svg(28, grid(() => "#FFFFFF")));
 // Default key image (before a suit is chosen) and plugin icon: coloured grid.
 write("actions/insert/key.svg", svg(144, `<rect width="100" height="100" fill="${KEY_BACKGROUND}"/><g transform="translate(10 10) scale(0.8)">${grid(coloured)}</g>`));
+// Custom snippet action: a heart with a plus sign; key before anything is captured.
+const heartPlus = (fill: string) =>
+	`<path transform="translate(0 6) scale(0.72)" d="${SUIT_PATHS.hearts}" fill="${fill}"/><path d="M76 52h10v18h18v10H86v18H76V80H58V70h18z" transform="translate(-6 -4)" fill="${fill}"/>`;
+mkdirSync(`${dir}/actions/snippet`, { recursive: true });
+write("actions/snippet/icon.svg", svg(20, heartPlus("#FFFFFF")));
+write("actions/snippet/key.svg", snippetKeySvg(undefined) + "\n");
 // Plugin icon must be PNG: 288x288 and 576x576 (@2x).
 const marketplace = svg(288, `<rect width="100" height="100" rx="18" fill="${KEY_BACKGROUND}"/><g transform="translate(10 10) scale(0.8)">${grid(coloured)}</g>`);
 for (const [suffix, width] of [["", 288], ["@2x", 576]] as const) {
@@ -34,3 +41,11 @@ for (const [suffix, width] of [["", 288], ["@2x", 576]] as const) {
 // Preview sheet of the four per-suit key images (not shipped).
 mkdirSync("dist", { recursive: true });
 for (const s of order) writeFileSync(`dist/preview-${s}.png`, new Resvg(suitKeySvg(s)).render().asPng());
+const samples = {
+	heart: [{ text: "♥", color: "#DC0000" }],
+	nt: [{ text: "1", color: "#111111", bold: true }, { text: "NT", color: "#111111" }],
+	akq: [{ text: "♠", color: "#111111" }, { text: "AKQ" }],
+	long: [{ text: "Stayman 2♣", color: "#008A35" }],
+};
+for (const [name, runs] of Object.entries(samples))
+	writeFileSync(`dist/preview-snippet-${name}.png`, new Resvg(snippetKeySvg(runs), { font: { loadSystemFonts: true } }).render().asPng());

@@ -2,9 +2,9 @@
 	"$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
 	"UUID": "com.monxas.bridgesuits",
 	"Name": "Bridge Suits",
-	"Version": "1.0.0.0",
+	"Version": "1.1.0.0",
 	"Author": "monxas",
-	"Description": "Inserts the four bridge suit symbols (♠ ♥ ♦ ♣) as coloured, editable rich text into Microsoft Word and other rich-text editors on Windows and macOS.",
+	"Description": "Inserts the four bridge suit symbols (♠ ♥ ♦ ♣), or any text you capture from the clipboard, as coloured, editable rich text into Microsoft Word and other rich-text editors on Windows and macOS.",
 	"Category": "Bridge Suits",
 	"CategoryIcon": "imgs/plugin/category-icon",
 	"Icon": "imgs/plugin/marketplace",
@@ -40,6 +40,22 @@
 			"States": [
 				{
 					"Image": "imgs/actions/insert/key",
+					"ShowTitle": false
+				}
+			]
+		},
+		{
+			"Name": "Insert Captured Text",
+			"UUID": "com.monxas.bridgesuits.snippet",
+			"Icon": "imgs/actions/snippet/icon",
+			"Tooltip": "Pastes text you captured from the clipboard (a symbol, 1NT, ♠AKQ...) with its colour and, optionally, its font, size and style.",
+			"PropertyInspectorPath": "ui/insert-snippet.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/snippet/key",
 					"ShowTitle": false
 				}
 			]

@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MAX_SNIPPET_LENGTH, parseCssColor, parseHtml, parseRtf, snippetFromCapture } from "../src/capture";
+import { MAX_SNIPPET_LENGTH, parseCssColor, parseHtml, parseRtf, parseSymbolField, snippetFromCapture } from "../src/capture";
 import { parseCaptureNote, parseProbeNote } from "../src/paste-helper";
 import { buildRtf } from "../src/richtext";
 
@@ -24,6 +26,41 @@ const WORD_RTF = R`{\rtf1\adeflang1025\ansi\ansicpg1252\uc1\adeff31507\deff0\sts
 {\*\colorschememapping 3c3f786d6c2076657273696f6e3d22312e302220656e636f64696e673d225554462d38}
 {\*\latentstyleshdr\lsdstimax376\lsdlockeddef0{\lsdlockedexcept \lsdqformat1 \lsdpriority0 \lsdlocked0 Normal;}}
 {\*\datastore 01050000020000001800000057006f00720064002e0044006f00630075006d0065006e0074002e00}}`;
+
+describe("real Word for Windows clipboard (test/fixtures/word-win-capture.rtf)", () => {
+	// Captured by test/windows/word-capture.ts from Word 16 on Windows 10: red bold ♥
+	// typed in Calibri 11 (Word switches it to Segoe UI Symbol), " 1NT " black
+	// Calibri, then ♥ ♠ from Insert > Symbol with the Symbol font (SYMBOL fields).
+	const rtf = readFileSync(fileURLToPath(new URL("./fixtures/word-win-capture.rtf", import.meta.url)), "latin1");
+
+	it("keeps text, colours, fonts, sizes and Insert > Symbol suits", () => {
+		expect(snippetFromCapture({ rtf, text: "♥ 1NT " })).toEqual({
+			source: "rtf",
+			runs: [
+				{ text: "♥", color: "#FF0000", font: "Segoe UI Symbol", sizePt: 11, bold: true, italic: false },
+				{ text: " 1NT ", color: "#000000", font: "Calibri", sizePt: 11, bold: false, italic: false },
+				{ text: "♥♠", color: "#000000", font: undefined, sizePt: 11, bold: false, italic: false },
+			],
+		});
+	});
+});
+
+describe("parseSymbolField", () => {
+	it("maps Symbol-font suits and keeps other fonts' characters", () => {
+		expect(parseSymbolField(String.raw`SYMBOL 170 \f "Symbol" \s 11`)).toEqual({ text: "♠", sizePt: 11, fromSymbolFont: true });
+		expect(parseSymbolField(String.raw`SYMBOL 9827 \f "Segoe UI Symbol" \u`)).toEqual({ text: "♣", font: "Segoe UI Symbol", sizePt: undefined });
+		expect(parseSymbolField(String.raw`SYMBOL 65 \f "Symbol"`)).toBeUndefined(); // Symbol alpha: not a suit
+		expect(parseSymbolField(String.raw`PAGE \* MERGEFORMAT`)).toBeUndefined();
+	});
+
+	it("drops a non-empty field result so the symbol is not doubled", () => {
+		expect(parseRtf(R`{\rtf1{\fonttbl{\f0 Calibri;}{\f3 Symbol;}}\f0\fs22 x{\field{\*\fldinst SYMBOL 168 \\f "Symbol" \\s 11}{\fldrslt\f3\fs22 \'a8}}y}`)).toEqual([
+			{ text: "x", color: undefined, font: "Calibri", sizePt: 11, bold: false, italic: false },
+			{ text: "♦", color: undefined, font: undefined, sizePt: 11, bold: false, italic: false },
+			{ text: "y", color: undefined, font: "Calibri", sizePt: 11, bold: false, italic: false },
+		]);
+	});
+});
 
 describe("parseRtf", () => {
 	it("reads Word's clipboard RTF: text, colour, font, size, bold", () => {

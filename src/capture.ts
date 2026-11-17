@@ -92,6 +92,34 @@ interface RtfState {
 	/** Inside a destination that produces no text (or a table handled separately). */
 	skip: boolean;
 	table?: "font" | "color";
+	/** Inside a field instruction (\fldinst), whose text is collected, not shown. */
+	fldinst?: boolean;
+	/** In a field whose instruction was a SYMBOL already emitted: its \fldrslt is dropped. */
+	symbolField?: boolean;
+}
+
+/**
+ * Word for Windows writes Insert > Symbol characters (w:sym) to RTF as
+ * `{\field{\*\fldinst SYMBOL 169 \\f "Symbol" \\s 11}{\fldrslt ...}}`, with an
+ * empty result. Returns the character, its font and size.
+ */
+export function parseSymbolField(
+	instruction: string,
+): { text: string; font?: string; sizePt?: number; fromSymbolFont?: boolean } | undefined {
+	const m = /^\s*SYMBOL\s+(\d{1,5}|0x[0-9a-f]{1,4})\b(.*)$/is.exec(instruction);
+	if (!m) return undefined;
+	const code = Number(m[1]);
+	if (!(code > 0 && code <= 0xffff)) return undefined;
+	const font = /\\f\s+"([^"]+)"/.exec(m[2])?.[1] ?? /\\f\s+(\S+)/.exec(m[2])?.[1];
+	const size = Number(/\\s\s+(\d+(?:\.\d+)?)/.exec(m[2])?.[1]);
+	const sizePt = size >= 1 && size <= 1638 ? size : undefined;
+	if (font === "Symbol") {
+		const mapped = symbolFontSuits(String.fromCharCode(code));
+		// Like Symbol-font text runs: mapped to Unicode suits, the font is dropped.
+		return mapped === undefined ? undefined : { text: mapped, sizePt, fromSymbolFont: true };
+	}
+	// \a / \j / \u switches pick ANSI, Shift-JIS or Unicode; without one, Unicode is the common case for suits.
+	return { text: String.fromCharCode(code), font, sizePt };
 }
 
 const decoder1252 = new TextDecoder("windows-1252");
@@ -126,6 +154,7 @@ export function parseRtf(rtf: string): RichRun[] {
 	let fontName = "";
 	let red = 0, green = 0, blue = 0, colorSet = false;
 	let groupStart = false; // just after "{", to recognise destinations
+	let fieldInstruction = "";
 
 	const emit = (text: string) => {
 		if (skipFallback > 0) {
@@ -133,6 +162,10 @@ export function parseRtf(rtf: string): RichRun[] {
 			skipFallback -= drop;
 			text = text.slice(drop);
 			if (!text) return;
+		}
+		if (st.fldinst) {
+			fieldInstruction += text;
+			return;
 		}
 		if (st.skip) return;
 		if (st.table === "font") {
@@ -178,6 +211,11 @@ export function parseRtf(rtf: string): RichRun[] {
 		const on = param !== 0;
 		if (groupStart && SKIP_DESTINATIONS.has(word)) st.skip = true;
 		switch (word) {
+			case "fldinst":
+				st.fldinst = true;
+				fieldInstruction = "";
+				break;
+			case "fldrslt": if (st.symbolField) st.skip = true; break;
 			case "fonttbl": st.table = "font"; break;
 			case "colortbl": st.table = "color"; break;
 			case "deff": defaultFont = param; break;
@@ -224,7 +262,26 @@ export function parseRtf(rtf: string): RichRun[] {
 		}
 		if (ch === "}") {
 			if (st.table === "font" && fontId !== undefined && fontName.trim() && !fonts.has(fontId)) fonts.set(fontId, fontName.trim());
+			const closedInstruction = st.fldinst;
 			st = stack.pop() ?? st;
+			if (closedInstruction && !st.fldinst) {
+				const symbol = parseSymbolField(fieldInstruction);
+				fieldInstruction = "";
+				if (symbol) {
+					st.symbolField = true;
+					if (!st.skip && !st.hidden) {
+						const fontNumber = st.font ?? defaultFont;
+						runs.push({
+							text: symbol.text,
+							color: colors[st.color],
+							font: symbol.fromSymbolFont ? undefined : cleanFont(symbol.font ?? (fontNumber === undefined ? undefined : fonts.get(fontNumber))),
+							sizePt: symbol.sizePt ?? st.halfPoints / 2,
+							bold: st.bold,
+							italic: st.italic,
+						});
+					}
+				}
+			}
 			groupStart = false;
 			i++;
 			continue;
